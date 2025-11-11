@@ -7,10 +7,12 @@ const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
 const path = require('path');
+const fs = require('fs');
 
 // Configuration
 const SESSION_NAME = 'my-whatsapp-session';
 const PORT = 3000;
+const TOKENS_PATH = path.join(__dirname, 'tokens');
 
 // Initialize Express app and WebSocket server
 const app = express();
@@ -19,13 +21,9 @@ const wss = new WebSocket.Server({ server });
 
 let whatsappClient = null;
 let connectedClients = new Set();
+let isLoggingOut = false;
 
-// Serve static files (HTML frontend)
-// app.use(express.static('public')); if in public folder
-
-// app.get('/', (req, res) => {
-//   res.sendFile(path.join(__dirname, 'public', 'index.html'));
-// });
+// Serve the HTML file from the same directory
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
@@ -81,7 +79,8 @@ async function initializeWhatsApp() {
       disableWelcome: true,
     });
 
-    console.log('WhatsApp client initialized successfully!');
+    console.log('=== WHATSAPP CLIENT CREATED ===');
+    console.log('Client initialized successfully!');
     
     // Set up message listener
     whatsappClient.onMessage(async (message) => {
@@ -91,7 +90,8 @@ async function initializeWhatsApp() {
     return whatsappClient;
 
   } catch (error) {
-    console.error('Error initializing WhatsApp client:', error);
+    console.error('=== ERROR INITIALIZING WHATSAPP ===');
+    console.error('Error details:', error);
     broadcast({ 
       type: 'error', 
       message: `Failed to initialize: ${error.message}` 
@@ -103,6 +103,10 @@ async function initializeWhatsApp() {
 // Send text message
 async function sendMessage(phoneNumber, message) {
   try {
+    if (isLoggingOut) {
+      throw new Error('Cannot send message: Logout in progress');
+    }
+
     if (!whatsappClient) {
       throw new Error('WhatsApp client not initialized');
     }
@@ -117,6 +121,53 @@ async function sendMessage(phoneNumber, message) {
 
   } catch (error) {
     console.error('Error sending message:', error);
+    throw error;
+  }
+}
+
+// Logout and clear session
+async function logout() {
+  try {
+    console.log('Logging out...');
+    isLoggingOut = true;
+    
+    // Notify all clients that logout is starting
+    broadcast({ 
+      type: 'logout-started',
+      message: 'Logout initiated' 
+    });
+    
+    if (whatsappClient) {
+      await whatsappClient.logout();
+      await whatsappClient.close();
+      whatsappClient = null;
+    }
+
+    // Delete session tokens folder
+    const sessionPath = path.join(TOKENS_PATH, SESSION_NAME);
+    if (fs.existsSync(sessionPath)) {
+      fs.rmSync(sessionPath, { recursive: true, force: true });
+      console.log('Session tokens deleted');
+    }
+
+    broadcast({ 
+      type: 'logged-out',
+      message: 'Logged out successfully' 
+    });
+
+    // Reset logout flag before reinitializing
+    isLoggingOut = false;
+
+    // Reinitialize WhatsApp client to get new QR code
+    setTimeout(() => {
+      initializeWhatsApp();
+    }, 2000);
+
+    return { success: true };
+
+  } catch (error) {
+    console.error('Error during logout:', error);
+    isLoggingOut = false;
     throw error;
   }
 }
@@ -154,6 +205,15 @@ wss.on('connection', (ws) => {
             error: error.message
           }));
         }
+      } else if (message.type === 'logout') {
+        try {
+          await logout();
+        } catch (error) {
+          ws.send(JSON.stringify({ 
+            type: 'logout-error',
+            error: error.message
+          }));
+        }
       }
 
     } catch (error) {
@@ -179,17 +239,23 @@ wss.on('connection', (ws) => {
 // Start server
 async function startServer() {
   try {
+    console.log('=== STARTING SERVER ===');
+    
     // Start HTTP/WebSocket server
     server.listen(PORT, () => {
+      console.log('=== SERVER STARTED ===');
       console.log(`Server running on http://localhost:${PORT}`);
       console.log(`Open your browser and navigate to http://localhost:${PORT}`);
     });
 
     // Initialize WhatsApp client
+    console.log('=== STARTING WHATSAPP INITIALIZATION ===');
     await initializeWhatsApp();
+    console.log('=== WHATSAPP INITIALIZATION COMPLETED ===');
 
   } catch (error) {
-    console.error('Error starting server:', error);
+    console.error('=== ERROR STARTING SERVER ===');
+    console.error('Error details:', error);
     process.exit(1);
   }
 }

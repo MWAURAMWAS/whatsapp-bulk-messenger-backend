@@ -63,6 +63,7 @@
             display: flex;
             align-items: center;
             gap: 10px;
+            justify-content: space-between;
         }
 
         .status-badge {
@@ -87,6 +88,29 @@
         .status-connecting {
             background: #ffeaa7;
             color: #d63031;
+        }
+
+        .btn-logout {
+            background: #e74c3c;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-logout:hover {
+            background: #c0392b;
+            transform: translateY(-1px);
+        }
+
+        .btn-logout:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
         }
 
         .qr-container {
@@ -244,8 +268,11 @@
             <!-- Connection Status Section -->
             <div class="section">
                 <div class="section-title">
-                    Connection Status
-                    <span id="statusBadge" class="status-badge status-disconnected">Disconnected</span>
+                    <div>
+                        Connection Status
+                        <span id="statusBadge" class="status-badge status-disconnected">Disconnected</span>
+                    </div>
+                    <button class="btn-logout hidden" id="logoutBtn">🚪 Logout</button>
                 </div>
             </div>
 
@@ -344,12 +371,42 @@
                     updateStatus('connected');
                     isConnected = true;
                     document.getElementById('messageSection').classList.remove('hidden');
+                    document.getElementById('logoutBtn').classList.remove('hidden');
                     addLog('WhatsApp connected successfully!', 'success');
+                    break;
+                case 'logout-started':
+                    isConnected = false;
+                    document.getElementById('messageSection').classList.add('hidden');
+                    document.getElementById('sendBtn').disabled = true;
+                    updateStatus('disconnected');
+                    addLog('Logout initiated...', 'info');
+                    break;
+                case 'logged-out':
+                    showQRSection();
+                    updateStatus('disconnected');
+                    isConnected = false;
+                    document.getElementById('messageSection').classList.add('hidden');
+                    document.getElementById('logoutBtn').classList.add('hidden');
+                    document.getElementById('logoutBtn').disabled = false;
+                    document.getElementById('logoutBtn').textContent = '🚪 Logout';
+                    document.getElementById('sendBtn').disabled = false;
+                    document.getElementById('sendBtn').textContent = 'Send Message';
+                    addLog('Logged out successfully. Waiting for new connection...', 'info');
+                    break;
+                case 'logout-error':
+                    addLog(`Logout error: ${data.error}`, 'error');
+                    document.getElementById('logoutBtn').disabled = false;
+                    document.getElementById('logoutBtn').textContent = '🚪 Logout';
+                    isConnected = true; // Restore connection state if logout failed
+                    document.getElementById('messageSection').classList.remove('hidden');
                     break;
                 case 'message-sent':
                     addLog(`Message sent to ${data.to}`, 'success');
                     document.getElementById('sendBtn').disabled = false;
                     document.getElementById('sendBtn').textContent = 'Send Message';
+                    // Clear form
+                    document.getElementById('phoneNumber').value = '';
+                    document.getElementById('message').value = '';
                     break;
                 case 'message-error':
                     addLog(`Error sending message: ${data.error}`, 'error');
@@ -366,18 +423,43 @@
         }
 
         function showQRCode(base64QR) {
+            console.log('Showing QR code, base64 length:', base64QR ? base64QR.length : 0);
+            
+            const qrSection = document.getElementById('qrSection');
             const qrCode = document.getElementById('qrCode');
             const qrSpinner = document.getElementById('qrSpinner');
             const qrInstructions = document.getElementById('qrInstructions');
             
+            // Make sure QR section is visible
+            qrSection.classList.remove('hidden');
+            
+            // Hide spinner
             qrSpinner.classList.add('hidden');
+            
+            // Show QR code
             qrCode.src = base64QR;
             qrCode.classList.remove('hidden');
+            
+            // Show instructions
             qrInstructions.classList.remove('hidden');
+            
+            console.log('QR code displayed');
         }
 
         function hideQRCode() {
             document.getElementById('qrSection').classList.add('hidden');
+        }
+
+        function showQRSection() {
+            const qrSection = document.getElementById('qrSection');
+            const qrCode = document.getElementById('qrCode');
+            const qrSpinner = document.getElementById('qrSpinner');
+            const qrInstructions = document.getElementById('qrInstructions');
+            
+            qrSection.classList.remove('hidden');
+            qrCode.classList.add('hidden');
+            qrInstructions.classList.add('hidden');
+            qrSpinner.classList.remove('hidden');
         }
 
         function updateStatus(status) {
@@ -415,6 +497,25 @@
             logContainer.appendChild(logEntry);
             logContainer.scrollTop = logContainer.scrollHeight;
         }
+
+        // Handle logout button
+        document.getElementById('logoutBtn').addEventListener('click', () => {
+            if (confirm('Are you sure you want to logout? This will disconnect your WhatsApp session.')) {
+                // Immediately set disconnected state
+                isConnected = false;
+                document.getElementById('logoutBtn').disabled = true;
+                document.getElementById('logoutBtn').textContent = 'Logging out...';
+                document.getElementById('sendBtn').disabled = true;
+                document.getElementById('messageSection').classList.add('hidden');
+                updateStatus('disconnected');
+                
+                ws.send(JSON.stringify({
+                    type: 'logout'
+                }));
+                
+                addLog('Logging out...', 'info');
+            }
+        });
 
         // Handle form submission
         document.getElementById('messageForm').addEventListener('submit', (e) => {
