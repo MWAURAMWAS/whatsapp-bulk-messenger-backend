@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp Message Sender</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 800px;
+            width: 100%;
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #25D366 0%, #128C7E 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 14px;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .section {
+            margin-bottom: 30px;
+        }
+
+        .section-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .status-disconnected {
+            background: #fee;
+            color: #c33;
+        }
+
+        .status-connected {
+            background: #efe;
+            color: #3c3;
+        }
+
+        .status-connecting {
+            background: #ffeaa7;
+            color: #d63031;
+        }
+
+        .qr-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 30px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            min-height: 300px;
+            justify-content: center;
+        }
+
+        #qrCode {
+            max-width: 256px;
+            width: 100%;
+            height: auto;
+            border: 3px solid #25D366;
+            border-radius: 10px;
+            background: white;
+            padding: 10px;
+        }
+
+        .qr-instructions {
+            margin-top: 20px;
+            text-align: center;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        input, textarea {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+            font-family: inherit;
+        }
+
+        input:focus, textarea:focus {
+            outline: none;
+            border-color: #25D366;
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 100px;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #25D366 0%, #128C7E 100%);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            width: 100%;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(37, 211, 102, 0.4);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .log-container {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 15px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+
+        .log-entry {
+            padding: 5px 0;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+
+        .log-time {
+            color: #666;
+            margin-right: 10px;
+        }
+
+        .log-success {
+            color: #27ae60;
+        }
+
+        .log-error {
+            color: #e74c3c;
+        }
+
+        .log-info {
+            color: #3498db;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #25D366;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📱 WhatsApp Message Sender</h1>
+            <p>Connect and send custom messages via WhatsApp Web</p>
+        </div>
+
+        <div class="content">
+            <!-- Connection Status Section -->
+            <div class="section">
+                <div class="section-title">
+                    Connection Status
+                    <span id="statusBadge" class="status-badge status-disconnected">Disconnected</span>
+                </div>
+            </div>
+
+            <!-- QR Code Section -->
+            <div class="section" id="qrSection">
+                <div class="section-title">Scan QR Code</div>
+                <div class="qr-container">
+                    <div id="qrSpinner" class="spinner"></div>
+                    <img id="qrCode" class="hidden" alt="QR Code" />
+                    <div class="qr-instructions hidden" id="qrInstructions">
+                        <p><strong>Scan this QR code with your WhatsApp:</strong></p>
+                        <p>1. Open WhatsApp on your phone</p>
+                        <p>2. Tap Menu or Settings → Linked Devices</p>
+                        <p>3. Tap Link a Device</p>
+                        <p>4. Point your phone at this screen to scan the code</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Message Form Section -->
+            <div class="section hidden" id="messageSection">
+                <div class="section-title">Send Message</div>
+                <form id="messageForm">
+                    <div class="form-group">
+                        <label for="phoneNumber">Phone Number (with country code, no + or spaces)</label>
+                        <input 
+                            type="text" 
+                            id="phoneNumber" 
+                            placeholder="e.g., 254712345678 for Kenya"
+                            required
+                        />
+                    </div>
+                    <div class="form-group">
+                        <label for="message">Message</label>
+                        <textarea 
+                            id="message" 
+                            placeholder="Type your message here..."
+                            required
+                        ></textarea>
+                    </div>
+                    <button type="submit" class="btn" id="sendBtn">Send Message</button>
+                </form>
+            </div>
+
+            <!-- Activity Log Section -->
+            <div class="section">
+                <div class="section-title">Activity Log</div>
+                <div class="log-container" id="logContainer">
+                    <div class="log-entry">
+                        <span class="log-time">--:--:--</span>
+                        <span class="log-info">Waiting for connection...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // WebSocket connection to backend
+        let ws;
+        let isConnected = false;
+
+        function connectWebSocket() {
+            // Connect to your backend WebSocket server
+            ws = new WebSocket('ws://localhost:3000');
+
+            ws.onopen = () => {
+                addLog('WebSocket connected', 'info');
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                handleMessage(data);
+            };
+
+            ws.onerror = (error) => {
+                addLog('Connection error. Make sure the backend is running.', 'error');
+            };
+
+            ws.onclose = () => {
+                addLog('WebSocket disconnected', 'error');
+                updateStatus('disconnected');
+                setTimeout(connectWebSocket, 3000); // Reconnect after 3 seconds
+            };
+        }
+
+        function handleMessage(data) {
+            switch(data.type) {
+                case 'qr':
+                    showQRCode(data.qr);
+                    updateStatus('connecting');
+                    addLog('QR Code received. Please scan with WhatsApp.', 'info');
+                    break;
+                case 'ready':
+                    hideQRCode();
+                    updateStatus('connected');
+                    isConnected = true;
+                    document.getElementById('messageSection').classList.remove('hidden');
+                    addLog('WhatsApp connected successfully!', 'success');
+                    break;
+                case 'message-sent':
+                    addLog(`Message sent to ${data.to}`, 'success');
+                    document.getElementById('sendBtn').disabled = false;
+                    document.getElementById('sendBtn').textContent = 'Send Message';
+                    break;
+                case 'message-error':
+                    addLog(`Error sending message: ${data.error}`, 'error');
+                    document.getElementById('sendBtn').disabled = false;
+                    document.getElementById('sendBtn').textContent = 'Send Message';
+                    break;
+                case 'status':
+                    addLog(data.message, 'info');
+                    break;
+                case 'error':
+                    addLog(`Error: ${data.message}`, 'error');
+                    break;
+            }
+        }
+
+        function showQRCode(base64QR) {
+            const qrCode = document.getElementById('qrCode');
+            const qrSpinner = document.getElementById('qrSpinner');
+            const qrInstructions = document.getElementById('qrInstructions');
+            
+            qrSpinner.classList.add('hidden');
+            qrCode.src = base64QR;
+            qrCode.classList.remove('hidden');
+            qrInstructions.classList.remove('hidden');
+        }
+
+        function hideQRCode() {
+            document.getElementById('qrSection').classList.add('hidden');
+        }
+
+        function updateStatus(status) {
+            const badge = document.getElementById('statusBadge');
+            badge.className = 'status-badge';
+            
+            switch(status) {
+                case 'connected':
+                    badge.classList.add('status-connected');
+                    badge.textContent = 'Connected';
+                    break;
+                case 'connecting':
+                    badge.classList.add('status-connecting');
+                    badge.textContent = 'Connecting';
+                    break;
+                default:
+                    badge.classList.add('status-disconnected');
+                    badge.textContent = 'Disconnected';
+            }
+        }
+
+        function addLog(message, type = 'info') {
+            const logContainer = document.getElementById('logContainer');
+            const logEntry = document.createElement('div');
+            logEntry.className = 'log-entry';
+            
+            const time = new Date().toLocaleTimeString();
+            const typeClass = `log-${type}`;
+            
+            logEntry.innerHTML = `
+                <span class="log-time">${time}</span>
+                <span class="${typeClass}">${message}</span>
+            `;
+            
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+
+        // Handle form submission
+        document.getElementById('messageForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            
+            if (!isConnected) {
+                addLog('Please wait for WhatsApp to connect', 'error');
+                return;
+            }
+            
+            const phoneNumber = document.getElementById('phoneNumber').value;
+            const message = document.getElementById('message').value;
+            
+            if (!phoneNumber || !message) {
+                addLog('Please fill in all fields', 'error');
+                return;
+            }
+            
+            // Send message through WebSocket
+            ws.send(JSON.stringify({
+                type: 'send-message',
+                phoneNumber: phoneNumber,
+                message: message
+            }));
+            
+            document.getElementById('sendBtn').disabled = true;
+            document.getElementById('sendBtn').textContent = 'Sending...';
+            addLog(`Sending message to ${phoneNumber}...`, 'info');
+        });
+
+        // Initialize WebSocket connection
+        connectWebSocket();
+    </script>
+</body>
+</html>
