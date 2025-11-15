@@ -2,8 +2,11 @@
 # exit on error
 set -o errexit
 
-# Install npm dependencies
+echo "📦 Installing npm dependencies..."
 npm install
 
-# Install Chromium for Puppeteer
-npx puppeteer browsers install chrome
+echo "🌐 Installing Chromium for Puppeteer..."
+# Use the full path to npx and puppeteer
+node node_modules/puppeteer/install.mjs
+
+echo "✅ Build complete!"
