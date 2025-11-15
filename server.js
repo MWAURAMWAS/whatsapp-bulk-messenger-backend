@@ -11,7 +11,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 
 // Configuration
-const PORT = 3000;
+const PORT = process.env.PORT || 3000; // ✅ FIXED: Use environment variable
 const TOKENS_BASE_PATH = path.join(__dirname, 'sessions');
 const TOKENS_PATH = path.join(__dirname, 'tokens');
 
@@ -28,7 +28,35 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-// Store active sessions: sessionId -> { client, ws, sessionPath, lastActivity, fingerprint, isInitializing }
+// Import keep-alive service
+const { keepAlive } = require('./keep-alive');
+
+// Add CORS for Vercel
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null,
+  process.env.FRONTEND_URL, // Your production Vercel URL
+].filter(Boolean);
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes(origin) || !origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
+// Add JSON parsing
+app.use(express.json());
+
+// Store active sessions: sessionId -> { client, ws, sessionPath, lastActivity, fingerprint }
 const activeSessions = new Map();
 
 // Store initializing sessions to prevent duplicates
@@ -36,7 +64,47 @@ const initializingSessions = new Set();
 
 // Serve the HTML file from the same directory
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'index.html'));
+  res.json({ 
+    message: 'WhatsApp Bulk Messenger Backend',
+    version: '1.0.0',
+    status: 'running',
+    endpoints: {
+      health: '/health',
+      status: '/status'
+    }
+  });
+});
+
+// Health check endpoint for keep-alive
+app.get('/health', (req, res) => {
+  const uptime = process.uptime();
+  const uptimeFormatted = `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m`;
+  
+  res.json({ 
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    uptime: uptimeFormatted,
+    uptimeSeconds: Math.floor(uptime),
+    activeSessions: activeSessions.size,
+    initializingSessions: initializingSessions.size,
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
+
+// Status endpoint for monitoring
+app.get('/status', (req, res) => {
+  const sessions = Array.from(activeSessions.entries()).map(([id, session]) => ({
+    id,
+    hasClient: !!session.client,
+    hasWebSocket: !!session.ws && session.ws.readyState === WebSocket.OPEN,
+    lastActivity: new Date(session.lastActivity).toISOString()
+  }));
+
+  res.json({
+    activeSessions: sessions,
+    totalSessions: activeSessions.size,
+    initializingSessions: initializingSessions.size
+  });
 });
 
 // Generate session ID from browser fingerprint (consistent hash)
@@ -147,70 +215,67 @@ async function initializeWhatsAppSession(sessionId, ws) {
     }
 
     const client = await wppconnect.create({
-  session: sessionId,
-  // ✅ CRITICAL: Set tokensPath to the parent directory
-  tokensPath: TOKENS_BASE_PATH,
-  // ✅ CRITICAL: Use just the sessionId, not a full path
-  folderNameToken: sessionId,
-  
-  catchQR: (base64Qr, asciiQR) => {
-    console.log(`📱 QR Code generated for session: ${sessionId}`);
-    console.log(`📏 QR length: ${base64Qr?.length || 0}`);
-    
-    const currentSession = activeSessions.get(sessionId);
-    
-    if (currentSession && currentSession.ws && currentSession.ws.readyState === WebSocket.OPEN) {
-      currentSession.ws.send(JSON.stringify({
-        type: 'qr',
-        qr: base64Qr,
-        sessionId: sessionId
-      }));
-      console.log(`✅ QR sent to frontend for session: ${sessionId}`);
-    } else {
-      console.error(`❌ WebSocket not ready for session: ${sessionId}`);
-    }
-  },
-  
-  statusFind: (statusSession, session) => {
-    console.log(`📊 Session ${sessionId} status:`, statusSession);
-    sendToSession(sessionId, {
-      type: 'status',
-      message: `Status: ${statusSession}`,
-      sessionId: sessionId
-    });
+      session: sessionId,
+      tokensPath: TOKENS_BASE_PATH,
+      folderNameToken: sessionId,
+      
+      catchQR: (base64Qr, asciiQR) => {
+        console.log(`📱 QR Code generated for session: ${sessionId}`);
+        console.log(`📏 QR length: ${base64Qr?.length || 0}`);
+        
+        const currentSession = activeSessions.get(sessionId);
+        
+        if (currentSession && currentSession.ws && currentSession.ws.readyState === WebSocket.OPEN) {
+          currentSession.ws.send(JSON.stringify({
+            type: 'qr',
+            qr: base64Qr,
+            sessionId: sessionId
+          }));
+          console.log(`✅ QR sent to frontend for session: ${sessionId}`);
+        } else {
+          console.error(`❌ WebSocket not ready for session: ${sessionId}`);
+        }
+      },
+      
+      statusFind: (statusSession, session) => {
+        console.log(`📊 Session ${sessionId} status:`, statusSession);
+        sendToSession(sessionId, {
+          type: 'status',
+          message: `Status: ${statusSession}`,
+          sessionId: sessionId
+        });
 
-    if (statusSession === 'inChat' || statusSession === 'qrReadSuccess') {
-      sendToSession(sessionId, {
-        type: 'ready',
-        message: 'WhatsApp connected successfully!',
-        sessionId: sessionId
-      });
-    }
-  },
-  
-  headless: true,
-  devtools: false,
-  useChrome: true,
-  debug: false,
-  logQR: false,
-  
-  browserArgs: [
-    '--no-sandbox',
-    '--disable-setuid-sandbox',
-    '--disable-web-security',
-    '--disable-features=VizDisplayCompositor',
-    '--disable-dev-shm-usage',
-    '--disable-gpu'
-  ],
-  
-  autoClose: 0,
-  disableWelcome: true,
-  
-  // ✅ ADD THIS: Force unique browser profile per session
-  puppeteerOptions: {
-    userDataDir: path.join(TOKENS_BASE_PATH, sessionId, 'browser-profile')
-  }
-});
+        if (statusSession === 'inChat' || statusSession === 'qrReadSuccess') {
+          sendToSession(sessionId, {
+            type: 'ready',
+            message: 'WhatsApp connected successfully!',
+            sessionId: sessionId
+          });
+        }
+      },
+      
+      headless: true,
+      devtools: false,
+      useChrome: true,
+      debug: false,
+      logQR: false,
+      
+      browserArgs: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-web-security',
+        '--disable-features=VizDisplayCompositor',
+        '--disable-dev-shm-usage',
+        '--disable-gpu'
+      ],
+      
+      autoClose: 0,
+      disableWelcome: true,
+      
+      puppeteerOptions: {
+        userDataDir: path.join(TOKENS_BASE_PATH, sessionId, 'browser-profile')
+      }
+    });
 
     console.log(`✅ WhatsApp client created for session: ${sessionId}`);
     initializingSessions.delete(sessionId);
@@ -244,7 +309,6 @@ async function sendMessage(sessionId, phone, message) {
     console.log('   Phone:', phone);
     console.log('   Message:', message.substring(0, 50) + '...');
     
-    // Format phone number correctly
     const formattedPhone = phone.includes('@c.us') ? phone : `${phone}@c.us`;
     
     console.log('   Formatted:', formattedPhone);
@@ -277,7 +341,6 @@ async function logoutSession(sessionId) {
       await session.client.close();
     }
 
-    // Delete session directory
     if (session.sessionPath && fs.existsSync(session.sessionPath)) {
       fs.rmSync(session.sessionPath, { recursive: true, force: true });
       console.log(`🗑️ Session directory cleaned: ${sessionId}`);
@@ -304,130 +367,116 @@ wss.on('connection', async (ws) => {
     try {
       const message = JSON.parse(data);
 
-      // Initialize session with browser fingerprint
-    if (message.type === 'init') {
-  const fingerprint = message.fingerprint;
-  sessionId = generateSessionId(fingerprint);
+      if (message.type === 'init') {
+        const fingerprint = message.fingerprint;
+        sessionId = generateSessionId(fingerprint);
 
-  console.log(`🆔 Session ID: ${sessionId}`);
+        console.log(`🆔 Session ID: ${sessionId}`);
 
-  // Check if session already exists and is connected
-  let session = activeSessions.get(sessionId);
-  
-  if (session && session.client) {
-    console.log(`♻️ Restoring existing session: ${sessionId}`);
-    
-    // ⭐ IMPORTANT: Close old WebSocket if it exists
-    if (session.ws && session.ws !== ws && session.ws.readyState === WebSocket.OPEN) {
-      console.log(`🔄 Closing old WebSocket connection for session: ${sessionId}`);
-      session.ws.close();
-    }
-    
-    // Update with new WebSocket
-    session.ws = ws;
-    session.lastActivity = Date.now();
-    
-    ws.send(JSON.stringify({ 
-      type: 'session-restored',
-      sessionId: sessionId,
-      message: 'Session restored - WhatsApp already connected'
-    }));
+        let session = activeSessions.get(sessionId);
+        
+        if (session && session.client) {
+          console.log(`♻️ Restoring existing session: ${sessionId}`);
+          
+          if (session.ws && session.ws !== ws && session.ws.readyState === WebSocket.OPEN) {
+            console.log(`🔄 Closing old WebSocket connection for session: ${sessionId}`);
+            session.ws.close();
+          }
+          
+          session.ws = ws;
+          session.lastActivity = Date.now();
+          
+          ws.send(JSON.stringify({ 
+            type: 'session-restored',
+            sessionId: sessionId,
+            message: 'Session restored - WhatsApp already connected'
+          }));
 
-    ws.send(JSON.stringify({ 
-      type: 'ready',
-      sessionId: sessionId,
-      message: 'WhatsApp is already connected' 
-    }));
-    
-    return;
-  }
+          ws.send(JSON.stringify({ 
+            type: 'ready',
+            sessionId: sessionId,
+            message: 'WhatsApp is already connected' 
+          }));
+          
+          return;
+        }
 
-  // ⭐ UPDATED: More lenient check - allow reconnection from same fingerprint
-  if (initializingSessions.has(sessionId)) {
-    const existingSession = activeSessions.get(sessionId);
-    
-    // If there's an existing session with a different WebSocket, it's probably a reconnection
-    if (existingSession && existingSession.ws !== ws) {
-      console.log(`🔄 Reconnecting existing session: ${sessionId}`);
-      
-      // Close old WebSocket
-      if (existingSession.ws && existingSession.ws.readyState === WebSocket.OPEN) {
-        existingSession.ws.close();
+        if (initializingSessions.has(sessionId)) {
+          const existingSession = activeSessions.get(sessionId);
+          
+          if (existingSession && existingSession.ws !== ws) {
+            console.log(`🔄 Reconnecting existing session: ${sessionId}`);
+            
+            if (existingSession.ws && existingSession.ws.readyState === WebSocket.OPEN) {
+              existingSession.ws.close();
+            }
+            
+            existingSession.ws = ws;
+            existingSession.lastActivity = Date.now();
+            initializingSessions.delete(sessionId);
+            
+            ws.send(JSON.stringify({ 
+              type: 'status',
+              sessionId: sessionId,
+              message: 'Reconnected to existing session'
+            }));
+            
+            return;
+          } else {
+            console.log(`⚠️ Session ${sessionId} already initializing`);
+            ws.send(JSON.stringify({ 
+              type: 'error',
+              sessionId: sessionId,
+              message: 'This session is already being initialized. Please wait.'
+            }));
+            return;
+          }
+        }
+        
+        console.log(`✨ Creating new session: ${sessionId}`);
+        
+        activeSessions.set(sessionId, {
+          client: null,
+          ws,
+          sessionPath: null,
+          lastActivity: Date.now(),
+          fingerprint
+        });
+        
+        try {
+          const result = await initializeWhatsAppSession(sessionId, ws);
+          
+          if (result) {
+            const { client, sessionPath } = result;
+            
+            const existingSession = activeSessions.get(sessionId);
+            if (existingSession) {
+              existingSession.client = client;
+              existingSession.sessionPath = sessionPath;
+            }
+
+            ws.send(JSON.stringify({
+              type: 'session-created',
+              sessionId: sessionId,
+              message: 'New session created'
+            }));
+          } else {
+            activeSessions.delete(sessionId);
+            initializingSessions.delete(sessionId);
+          }
+        } catch (error) {
+          console.error(`❌ Failed to initialize session ${sessionId}:`, error);
+          activeSessions.delete(sessionId);
+          initializingSessions.delete(sessionId);
+          
+          ws.send(JSON.stringify({
+            type: 'error',
+            sessionId: sessionId,
+            message: `Initialization failed: ${error.message}`
+          }));
+        }
       }
-      
-      // Update WebSocket and remove from initializing
-      existingSession.ws = ws;
-      existingSession.lastActivity = Date.now();
-      initializingSessions.delete(sessionId);
-      
-      // Send status to new connection
-      ws.send(JSON.stringify({ 
-        type: 'status',
-        sessionId: sessionId,
-        message: 'Reconnected to existing session'
-      }));
-      
-      return;
-    } else {
-      // Same WebSocket trying to initialize again - this is an error
-      console.log(`⚠️ Session ${sessionId} already initializing`);
-      ws.send(JSON.stringify({ 
-        type: 'error',
-        sessionId: sessionId,
-        message: 'This session is already being initialized. Please wait.'
-      }));
-      return;
-    }
-  }
-  console.log(`✨ Creating new session: ${sessionId}`);
-  
-  // ⭐ Store WebSocket TEMPORARILY (without client)
-  activeSessions.set(sessionId, {
-    client: null,
-    ws,
-    sessionPath: null,
-    lastActivity: Date.now(),
-    fingerprint
-  });
-  
-  // Initialize WhatsApp client
-  try {
-    const result = await initializeWhatsAppSession(sessionId, ws);
-    
-    if (result) {
-      const { client, sessionPath } = result;
-      
-      // Update session with client and sessionPath
-      const existingSession = activeSessions.get(sessionId);
-      if (existingSession) {
-        existingSession.client = client;
-        existingSession.sessionPath = sessionPath;
-      }
 
-      ws.send(JSON.stringify({
-        type: 'session-created',
-        sessionId: sessionId,
-        message: 'New session created'
-      }));
-    } else {
-      // ⭐ NEW: Cleanup if initialization failed
-      activeSessions.delete(sessionId);
-      initializingSessions.delete(sessionId);
-    }
-  } catch (error) {
-    console.error(`❌ Failed to initialize session ${sessionId}:`, error);
-    activeSessions.delete(sessionId);
-    initializingSessions.delete(sessionId);
-    
-    ws.send(JSON.stringify({
-      type: 'error',
-      sessionId: sessionId,
-      message: `Initialization failed: ${error.message}`
-    }));
-  }
-}
-
-      // Handle send message
       else if (message.type === 'send-message') {
         if (!sessionId) {
           ws.send(JSON.stringify({ 
@@ -456,7 +505,6 @@ wss.on('connection', async (ws) => {
         }
       }
 
-      // Handle logout
       else if (message.type === 'logout') {
         if (!sessionId) {
           ws.send(JSON.stringify({ 
@@ -474,7 +522,6 @@ wss.on('connection', async (ws) => {
             sessionId: sessionId
           }));
           
-          // Wait before allowing reconnection
           setTimeout(() => {
             initializingSessions.delete(sessionId);
           }, 3000);
@@ -499,7 +546,12 @@ wss.on('connection', async (ws) => {
 
   ws.on('close', () => {
     console.log(`🔌 WebSocket closed for session: ${sessionId}`);
-    // Don't cleanup immediately - session might reconnect
+    
+    // Remove from initializing set to allow reconnection
+    if (sessionId) {
+      initializingSessions.delete(sessionId);
+      console.log(`✅ Removed ${sessionId} from initializing set`);
+    }
   });
 
   ws.on('error', (error) => {
@@ -512,16 +564,23 @@ async function startServer() {
   try {
     console.log('=== STARTING MULTI-USER SERVER ===');
 
-    // Clear any stuck initialization flags from previous run
-    initializingSessions.clear(); // ← ADD THIS
-    activeSessions.clear(); // ← ADD THIS TOO
+    initializingSessions.clear();
+    activeSessions.clear();
     
-    // Start HTTP/WebSocket server
     server.listen(PORT, () => {
       console.log('✅ SERVER STARTED');
       console.log(`🌐 Server: http://localhost:${PORT}`);
       console.log(`📁 Sessions folder: ${TOKENS_BASE_PATH}`);
+      console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+      
+      if (process.env.RENDER_EXTERNAL_URL) {
+        console.log(`🔗 External URL: ${process.env.RENDER_EXTERNAL_URL}`);
+      }
+      
       console.log('🚀 Ready for multiple users!');
+      
+      // Start keep-alive service
+      keepAlive();
     });
 
   } catch (error) {
