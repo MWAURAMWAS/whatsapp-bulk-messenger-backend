@@ -273,17 +273,20 @@ async function initializeWhatsAppSession(sessionId, ws) {
       disableWelcome: true,
       
       puppeteerOptions: {
-        executablePath: puppeteer.executablePath(), // ✅ Force Puppeteer Chromium
-        userDataDir: path.join(TOKENS_BASE_PATH, sessionId, 'browser-profile'),
-        args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-web-security',
-      '--disable-features=VizDisplayCompositor',
-      '--disable-dev-shm-usage',
-      '--disable-gpu'
-    ]
-      }
+  // ✅ executablePath REMOVED - let Puppeteer find Chrome automatically
+  userDataDir: path.join(TOKENS_BASE_PATH, sessionId, 'browser-profile'),
+  headless: true, // ← Added explicitly
+  args: [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-web-security',
+    '--disable-features=VizDisplayCompositor',
+    '--disable-dev-shm-usage',
+    '--disable-gpu',
+    '--disable-software-rasterizer', // ← Added
+    '--disable-extensions' // ← Added
+  ]
+}
     });
 
     console.log(`✅ WhatsApp client created for session: ${sessionId}`);
