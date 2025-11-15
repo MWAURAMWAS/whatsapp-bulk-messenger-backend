@@ -1,7 +1,7 @@
 // WhatsApp Message Sender Backend with WebSocket Support
 // Install required packages:
 // npm install @wppconnect-team/wppconnect express ws
-const puppeteer = require('puppeteer'); // add this near the other requires
+const puppeteer = require('puppeteer');
 const wppconnect = require('@wppconnect-team/wppconnect');
 const express = require('express');
 const http = require('http');
@@ -11,9 +11,14 @@ const fs = require('fs');
 const crypto = require('crypto');
 
 // Configuration
-const PORT = process.env.PORT || 3000; // ✅ FIXED: Use environment variable
+const PORT = process.env.PORT || 3000;
 const TOKENS_BASE_PATH = path.join(__dirname, 'sessions');
 const TOKENS_PATH = path.join(__dirname, 'tokens');
+
+// ✅ FIX: Set Chrome executable path for wppconnect/puppeteer-extra
+const chromePath = puppeteer.executablePath();
+console.log(`🔍 Chrome executable path: ${chromePath}`);
+process.env.PUPPETEER_EXECUTABLE_PATH = chromePath;
 
 // Ensure directories exist
 if (!fs.existsSync(TOKENS_BASE_PATH)) {
@@ -36,7 +41,7 @@ const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:3001',
   process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null,
-  process.env.FRONTEND_URL, // Your production Vercel URL
+  process.env.FRONTEND_URL,
 ].filter(Boolean);
 
 app.use((req, res, next) => {
@@ -56,10 +61,8 @@ app.use((req, res, next) => {
 // Add JSON parsing
 app.use(express.json());
 
-// Store active sessions: sessionId -> { client, ws, sessionPath, lastActivity, fingerprint }
+// Store active sessions
 const activeSessions = new Map();
-
-// Store initializing sessions to prevent duplicates
 const initializingSessions = new Set();
 
 // Serve the HTML file from the same directory
@@ -75,7 +78,7 @@ app.get('/', (req, res) => {
   });
 });
 
-// Health check endpoint for keep-alive
+// Health check endpoint
 app.get('/health', (req, res) => {
   const uptime = process.uptime();
   const uptimeFormatted = `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m`;
@@ -91,7 +94,7 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Status endpoint for monitoring
+// Status endpoint
 app.get('/status', (req, res) => {
   const sessions = Array.from(activeSessions.entries()).map(([id, session]) => ({
     id,
@@ -107,7 +110,7 @@ app.get('/status', (req, res) => {
   });
 });
 
-// Generate session ID from browser fingerprint (consistent hash)
+// Generate session ID from browser fingerprint
 function generateSessionId(fingerprint) {
   return crypto
     .createHash('sha256')
@@ -119,7 +122,7 @@ function generateSessionId(fingerprint) {
 // Cleanup inactive sessions (30 minutes timeout)
 setInterval(() => {
   const now = Date.now();
-  const TIMEOUT = 30 * 60 * 1000; // 30 minutes
+  const TIMEOUT = 30 * 60 * 1000;
 
   activeSessions.forEach(async (session, sessionId) => {
     if (now - session.lastActivity > TIMEOUT) {
@@ -127,7 +130,7 @@ setInterval(() => {
       await cleanupSession(sessionId);
     }
   });
-}, 5 * 60 * 1000); // Check every 5 minutes
+}, 5 * 60 * 1000);
 
 // Cleanup session
 async function cleanupSession(sessionId) {
@@ -137,7 +140,6 @@ async function cleanupSession(sessionId) {
   try {
     console.log(`🧹 Cleaning up session: ${sessionId}`);
     
-    // Close WhatsApp client
     if (session.client) {
       try {
         await session.client.close();
@@ -146,7 +148,6 @@ async function cleanupSession(sessionId) {
       }
     }
 
-    // Clean up session directory
     if (session.sessionPath && fs.existsSync(session.sessionPath)) {
       try {
         fs.rmSync(session.sessionPath, { recursive: true, force: true });
@@ -174,7 +175,6 @@ function sendToSession(sessionId, data) {
 
 // Initialize WhatsApp client for a specific session
 async function initializeWhatsAppSession(sessionId, ws) {
-  // Prevent duplicate initialization
   if (initializingSessions.has(sessionId)) {
     console.log(`⚠️ Session ${sessionId} is already initializing, skipping...`);
     return null;
@@ -185,10 +185,8 @@ async function initializeWhatsAppSession(sessionId, ws) {
   try {
     console.log(`🚀 Initializing WhatsApp for session: ${sessionId}`);
     
-    // Use consistent session path
     const sessionPath = path.join(TOKENS_BASE_PATH, sessionId);
     
-    // Create directory if needed
     if (!fs.existsSync(sessionPath)) {
       fs.mkdirSync(sessionPath, { recursive: true });
     }
@@ -201,13 +199,11 @@ async function initializeWhatsAppSession(sessionId, ws) {
       sessionId: sessionId
     });
 
-    // Check for existing session and close it first
     const existingSession = activeSessions.get(sessionId);
     if (existingSession && existingSession.client) {
       try {
         console.log(`🧹 Closing existing client for session: ${sessionId}`);
         await existingSession.client.close();
-        // Wait a bit for the browser to fully close
         await new Promise(resolve => setTimeout(resolve, 2000));
       } catch (error) {
         console.log(`⚠️ Error closing existing client: ${error.message}`);
@@ -256,7 +252,7 @@ async function initializeWhatsAppSession(sessionId, ws) {
       
       headless: true,
       devtools: false,
-      useChrome: false, // << CHANGE THIS to false!
+      useChrome: false,
       debug: false,
       logQR: false,
       
@@ -266,27 +262,30 @@ async function initializeWhatsAppSession(sessionId, ws) {
         '--disable-web-security',
         '--disable-features=VizDisplayCompositor',
         '--disable-dev-shm-usage',
-        '--disable-gpu'
+        '--disable-gpu',
+        '--disable-software-rasterizer',
+        '--disable-extensions'
       ],
       
       autoClose: 0,
       disableWelcome: true,
       
       puppeteerOptions: {
-  // ✅ executablePath REMOVED - let Puppeteer find Chrome automatically
-  userDataDir: path.join(TOKENS_BASE_PATH, sessionId, 'browser-profile'),
-  headless: true, // ← Added explicitly
-  args: [
-    '--no-sandbox',
-    '--disable-setuid-sandbox',
-    '--disable-web-security',
-    '--disable-features=VizDisplayCompositor',
-    '--disable-dev-shm-usage',
-    '--disable-gpu',
-    '--disable-software-rasterizer', // ← Added
-    '--disable-extensions' // ← Added
-  ]
-}
+        // ✅ Use Puppeteer's detected Chrome path
+        executablePath: chromePath,
+        userDataDir: path.join(TOKENS_BASE_PATH, sessionId, 'browser-profile'),
+        headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-web-security',
+          '--disable-features=VizDisplayCompositor',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--disable-software-rasterizer',
+          '--disable-extensions'
+        ]
+      }
     });
 
     console.log(`✅ WhatsApp client created for session: ${sessionId}`);
@@ -559,7 +558,6 @@ wss.on('connection', async (ws) => {
   ws.on('close', () => {
     console.log(`🔌 WebSocket closed for session: ${sessionId}`);
     
-    // Remove from initializing set to allow reconnection
     if (sessionId) {
       initializingSessions.delete(sessionId);
       console.log(`✅ Removed ${sessionId} from initializing set`);
