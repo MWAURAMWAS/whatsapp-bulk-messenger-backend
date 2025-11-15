@@ -256,7 +256,7 @@ async function initializeWhatsAppSession(sessionId, ws) {
       
       headless: true,
       devtools: false,
-      useChrome: true,
+      useChrome: false, // << CHANGE THIS to false!
       debug: false,
       logQR: false,
       
