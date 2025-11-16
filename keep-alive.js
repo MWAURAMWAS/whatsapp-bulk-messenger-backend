@@ -1,35 +1,37 @@
-// keep-alive.js
+// keep-alive.js - Railway optimized
 const https = require('https');
 
-const BACKEND_URL = process.env.RENDER_EXTERNAL_URL;
+const BACKEND_URL = process.env.RAILWAY_PUBLIC_DOMAIN 
+  ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+  : null;
 
 function keepAlive() {
-  // Only run in production
   if (process.env.NODE_ENV !== 'production' || !BACKEND_URL) {
     console.log('⏸️  Keep-alive disabled (not in production)');
     return;
   }
 
-  console.log('🔄 Keep-alive service started');
+  console.log('🚂 Railway Keep-alive service started');
   console.log(`📍 Pinging: ${BACKEND_URL}/health`);
 
-  // Ping every 14 minutes (before Render's 15-minute timeout)
+  // Railway doesn't have strict timeouts like Render
+  // Ping every 10 minutes to keep connections fresh
   setInterval(() => {
     const url = `${BACKEND_URL}/health`;
     
     https.get(url, (res) => {
       const timestamp = new Date().toLocaleTimeString();
-      console.log(`✅ [${timestamp}] Keep-alive ping successful: ${res.statusCode}`);
+      console.log(`✅ [${timestamp}] Keep-alive: ${res.statusCode}`);
     }).on('error', (err) => {
       const timestamp = new Date().toLocaleTimeString();
       console.error(`❌ [${timestamp}] Keep-alive error:`, err.message);
     });
-  }, 14 * 60 * 1000); // 14 minutes
+  }, 10 * 60 * 1000); // 10 minutes
 
-  // Initial ping after 1 minute
+  // Initial ping
   setTimeout(() => {
     https.get(`${BACKEND_URL}/health`, (res) => {
-      console.log(`✅ Initial keep-alive ping: ${res.statusCode}`);
+      console.log(`✅ Initial keep-alive: ${res.statusCode}`);
     }).on('error', (err) => {
       console.error(`❌ Initial keep-alive error:`, err.message);
     });

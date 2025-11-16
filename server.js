@@ -12,6 +12,12 @@ const crypto = require('crypto');
 
 // Configuration
 const PORT = process.env.PORT || 3000;
+// ✅ Railway configuration
+const IS_RAILWAY = process.env.RAILWAY_ENVIRONMENT !== undefined;
+
+if (IS_RAILWAY) {
+  console.log('🚂 Running on Railway');
+}
 const TOKENS_BASE_PATH = path.join(__dirname, 'sessions');
 const TOKENS_PATH = path.join(__dirname, 'tokens');
 
@@ -142,10 +148,10 @@ function generateSessionId(fingerprint) {
     .substring(0, 16);
 }
 
-// Cleanup inactive sessions (30 minutes timeout)
+// Cleanup inactive sessions (Railway has better resources - 60 minutes timeout)
 setInterval(() => {
   const now = Date.now();
-  const TIMEOUT = 30 * 60 * 1000;
+  const TIMEOUT = 60 * 60 * 1000; // 60 minutes on Railway vs 30 on Render
 
   activeSessions.forEach(async (session, sessionId) => {
     if (now - session.lastActivity > TIMEOUT) {
@@ -279,16 +285,23 @@ async function initializeWhatsAppSession(sessionId, ws) {
       debug: false,
       logQR: false,
       
-      browserArgs: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-web-security',
-        '--disable-features=VizDisplayCompositor',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--disable-software-rasterizer',
-        '--disable-extensions'
-      ],
+     browserArgs: [
+  '--no-sandbox',
+  '--disable-setuid-sandbox',
+  '--disable-web-security',
+  '--disable-features=VizDisplayCompositor',
+  '--disable-dev-shm-usage',
+  '--disable-gpu',
+  '--disable-software-rasterizer',
+  '--disable-extensions',
+  // Railway-specific optimizations
+  '--single-process',
+  '--no-zygote',
+  '--disable-accelerated-2d-canvas',
+  '--disable-background-timer-throttling',
+  '--disable-backgrounding-occluded-windows',
+  '--disable-renderer-backgrounding'
+],
       
       autoClose: 0,
       disableWelcome: true,
@@ -606,9 +619,9 @@ async function startServer() {
       console.log(`📁 Sessions folder: ${TOKENS_BASE_PATH}`);
       console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
       
-      if (process.env.RENDER_EXTERNAL_URL) {
-        console.log(`🔗 External URL: ${process.env.RENDER_EXTERNAL_URL}`);
-      }
+      if (process.env.RAILWAY_PUBLIC_DOMAIN) {
+  console.log(`🔗 Railway URL: https://${process.env.RAILWAY_PUBLIC_DOMAIN}`);
+}
       
       console.log('🚀 Ready for multiple users!');
       
