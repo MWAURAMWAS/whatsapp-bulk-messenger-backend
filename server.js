@@ -192,13 +192,20 @@ async function cleanupSession(sessionId) {
     }
 
     if (session.sessionPath && fs.existsSync(session.sessionPath)) {
-      try {
-        fs.rmSync(session.sessionPath, { recursive: true, force: true });
-        console.log(`🗑️ Session directory cleaned: ${sessionId}`);
-      } catch (error) {
-        console.log(`⚠️ Could not clean session directory: ${error.message}`);
-      }
+  try {
+    // ✅ Also clean browser profile specifically before deleting whole folder
+    const browserProfilePath = path.join(session.sessionPath, 'browser-profile');
+    if (fs.existsSync(browserProfilePath)) {
+      fs.rmSync(browserProfilePath, { recursive: true, force: true });
+      console.log(`🗑️ Browser profile cleaned: ${sessionId}`);
     }
+    
+    fs.rmSync(session.sessionPath, { recursive: true, force: true });
+    console.log(`🗑️ Session directory cleaned: ${sessionId}`);
+  } catch (error) {
+    console.log(`⚠️ Could not clean session directory: ${error.message}`);
+  }
+}
 
     activeSessions.delete(sessionId);
     initializingSessions.delete(sessionId);
@@ -262,6 +269,17 @@ async function initializeWhatsAppSession(sessionId, ws) {
         console.log(`⚠️ Error closing existing client: ${error.message}`);
       }
     }
+    / ✅ FIX: Force cleanup browser profile if it exists (prevents "browser already running" error)
+const browserProfilePath = path.join(sessionPath, 'browser-profile');
+if (fs.existsSync(browserProfilePath)) {
+  try {
+    console.log(`🗑️ Removing existing browser profile: ${sessionId}`);
+    fs.rmSync(browserProfilePath, { recursive: true, force: true });
+    console.log(`✅ Browser profile cleaned for: ${sessionId}`);
+  } catch (error) {
+    console.log(`⚠️ Could not clean browser profile: ${error.message}`);
+  }
+}
 
     const client = await wppconnect.create({
       session: sessionId,
