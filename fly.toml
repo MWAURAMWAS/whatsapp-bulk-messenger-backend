@@ -1,0 +1,40 @@
+app = "whatsapp-backend-hp"
+primary_region = "fra"
+
+[build]
+
+[env]
+  NODE_ENV = "production"
+  PORT = "8080"
+
+[[services]]
+  internal_port = 8080
+  protocol = "tcp"
+  auto_stop_machines = false
+  auto_start_machines = true
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80
+    force_https = true
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443
+
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 1000
+    soft_limit = 1000
+
+  [[services.http_checks]]
+    interval = "15s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/health"
+    timeout = "5s"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 256

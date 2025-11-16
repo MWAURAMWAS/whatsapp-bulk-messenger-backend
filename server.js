@@ -92,7 +92,7 @@ app.use(express.json());
 
 // Store active sessions
 const activeSessions = new Map();
-const initializingSessions = new Set();
+const initializingSessions = new Map(); // ✅ FIX 1: Changed from Set to Map to track timestamps
 
 // Serve the HTML file from the same directory
 app.get('/', (req, res) => {
@@ -161,6 +161,20 @@ setInterval(() => {
   });
 }, 5 * 60 * 1000);
 
+// ✅ FIX 2: Clean up stuck initializations
+setInterval(() => {
+  const now = Date.now();
+  const INIT_TIMEOUT = 3 * 60 * 1000; // 3 minutes max for initialization
+  
+  initializingSessions.forEach((timestamp, sessionId) => {
+    if (now - timestamp > INIT_TIMEOUT) {
+      console.log(`⏰ Cleaning up stuck initialization: ${sessionId}`);
+      initializingSessions.delete(sessionId);
+      cleanupSession(sessionId);
+    }
+  });
+}, 60 * 1000); // Check every minute
+
 // Cleanup session
 async function cleanupSession(sessionId) {
   const session = activeSessions.get(sessionId);
@@ -204,12 +218,22 @@ function sendToSession(sessionId, data) {
 
 // Initialize WhatsApp client for a specific session
 async function initializeWhatsAppSession(sessionId, ws) {
+  // ✅ FIX 3: Check if stuck, allow retry after timeout
   if (initializingSessions.has(sessionId)) {
-    console.log(`⚠️ Session ${sessionId} is already initializing, skipping...`);
-    return null;
+    const initStartTime = initializingSessions.get(sessionId);
+    const elapsed = Date.now() - initStartTime;
+    
+    if (elapsed < 120000) { // 2 minutes
+      console.log(`⚠️ Session ${sessionId} is already initializing (${Math.floor(elapsed/1000)}s ago), skipping...`);
+      return null;
+    } else {
+      console.log(`⚠️ Session ${sessionId} initialization timed out, forcing cleanup...`);
+      initializingSessions.delete(sessionId);
+      await cleanupSession(sessionId);
+    }
   }
 
-  initializingSessions.add(sessionId);
+  initializingSessions.set(sessionId, Date.now()); // ✅ Store timestamp instead of add()
 
   try {
     console.log(`🚀 Initializing WhatsApp for session: ${sessionId}`);
@@ -250,15 +274,29 @@ async function initializeWhatsAppSession(sessionId, ws) {
         
         const currentSession = activeSessions.get(sessionId);
         
-        if (currentSession && currentSession.ws && currentSession.ws.readyState === WebSocket.OPEN) {
-          currentSession.ws.send(JSON.stringify({
-            type: 'qr',
-            qr: base64Qr,
-            sessionId: sessionId
-          }));
-          console.log(`✅ QR sent to frontend for session: ${sessionId}`);
+        // ✅ FIX 4: Better WebSocket diagnostics and cleanup
+        if (currentSession && currentSession.ws) {
+          const wsState = currentSession.ws.readyState;
+          console.log(`🔌 WebSocket state: ${wsState} (0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED)`);
+          
+          if (wsState === WebSocket.OPEN) {
+            currentSession.ws.send(JSON.stringify({
+              type: 'qr',
+              qr: base64Qr,
+              sessionId: sessionId
+            }));
+            console.log(`✅ QR sent to frontend for session: ${sessionId}`);
+          } else {
+            console.error(`❌ WebSocket not OPEN for session: ${sessionId}`);
+            // Force cleanup if WebSocket is dead
+            if (wsState === WebSocket.CLOSED) {
+              console.log(`🧹 Forcing cleanup due to dead WebSocket`);
+              initializingSessions.delete(sessionId);
+              cleanupSession(sessionId);
+            }
+          }
         } else {
-          console.error(`❌ WebSocket not ready for session: ${sessionId}`);
+          console.error(`❌ No session or WebSocket found for: ${sessionId}`);
         }
       },
       
@@ -271,6 +309,10 @@ async function initializeWhatsAppSession(sessionId, ws) {
         });
 
         if (statusSession === 'inChat' || statusSession === 'qrReadSuccess') {
+          // ✅ FIX 5: Clear initialization flag on successful connection
+          initializingSessions.delete(sessionId);
+          console.log(`✅ Session ${sessionId} connected, removed from initializing set`);
+          
           sendToSession(sessionId, {
             type: 'ready',
             message: 'WhatsApp connected successfully!',
@@ -285,23 +327,21 @@ async function initializeWhatsAppSession(sessionId, ws) {
       debug: false,
       logQR: false,
       
-     browserArgs: [
-  '--no-sandbox',
-  '--disable-setuid-sandbox',
-  '--disable-web-security',
-  '--disable-features=VizDisplayCompositor',
-  '--disable-dev-shm-usage',
-  '--disable-gpu',
-  '--disable-software-rasterizer',
-  '--disable-extensions',
-  // Railway-specific optimizations
-  '--single-process',
-  '--no-zygote',
-  '--disable-accelerated-2d-canvas',
-  '--disable-background-timer-throttling',
-  '--disable-backgrounding-occluded-windows',
-  '--disable-renderer-backgrounding'
-],
+      // ✅ FIX 6: Removed --single-process and --no-zygote (cause crashes)
+      browserArgs: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-web-security',
+        '--disable-features=VizDisplayCompositor',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--disable-software-rasterizer',
+        '--disable-extensions',
+        '--disable-accelerated-2d-canvas',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding'
+      ],
       
       autoClose: 0,
       disableWelcome: true,
@@ -422,30 +462,47 @@ wss.on('connection', async (ws) => {
 
         let session = activeSessions.get(sessionId);
         
+        // ✅ FIX 8: Verify client is actually alive before restoring
         if (session && session.client) {
-          console.log(`♻️ Restoring existing session: ${sessionId}`);
+          console.log(`♻️ Checking existing session: ${sessionId}`);
           
-          if (session.ws && session.ws !== ws && session.ws.readyState === WebSocket.OPEN) {
-            console.log(`🔄 Closing old WebSocket connection for session: ${sessionId}`);
-            session.ws.close();
-          }
-          
-          session.ws = ws;
-          session.lastActivity = Date.now();
-          
-          ws.send(JSON.stringify({ 
-            type: 'session-restored',
-            sessionId: sessionId,
-            message: 'Session restored - WhatsApp already connected'
-          }));
+          try {
+            const isConnected = await session.client.isConnected();
+            
+            if (isConnected) {
+              console.log(`✅ Session ${sessionId} is still valid`);
+              
+              if (session.ws && session.ws !== ws && session.ws.readyState === WebSocket.OPEN) {
+                console.log(`🔄 Closing old WebSocket connection`);
+                session.ws.close();
+              }
+              
+              session.ws = ws;
+              session.lastActivity = Date.now();
+              
+              ws.send(JSON.stringify({ 
+                type: 'session-restored',
+                sessionId: sessionId,
+                message: 'Session restored - WhatsApp already connected'
+              }));
 
-          ws.send(JSON.stringify({ 
-            type: 'ready',
-            sessionId: sessionId,
-            message: 'WhatsApp is already connected' 
-          }));
-          
-          return;
+              ws.send(JSON.stringify({ 
+                type: 'ready',
+                sessionId: sessionId,
+                message: 'WhatsApp is already connected' 
+              }));
+              
+              return;
+            } else {
+              console.log(`⚠️ Session ${sessionId} client is dead, cleaning up...`);
+              await cleanupSession(sessionId);
+              // Fall through to create new session
+            }
+          } catch (error) {
+            console.log(`⚠️ Cannot verify session ${sessionId}, cleaning up:`, error.message);
+            await cleanupSession(sessionId);
+            // Fall through to create new session
+          }
         }
 
         if (initializingSessions.has(sessionId)) {
@@ -591,12 +648,34 @@ wss.on('connection', async (ws) => {
     }
   });
 
+  // ✅ FIX 7: Handle browser refresh vs tab close
   ws.on('close', () => {
     console.log(`🔌 WebSocket closed for session: ${sessionId}`);
     
     if (sessionId) {
-      initializingSessions.delete(sessionId);
-      console.log(`✅ Removed ${sessionId} from initializing set`);
+      const session = activeSessions.get(sessionId);
+      
+      if (session?.client) {
+        // Give 10 seconds grace period for browser refresh ONLY
+        setTimeout(async () => {
+          const currentSession = activeSessions.get(sessionId);
+          
+          // If WebSocket reconnected within 10s (browser refresh), keep it
+          if (currentSession?.ws && currentSession.ws.readyState === WebSocket.OPEN) {
+            console.log(`✅ Session ${sessionId} reconnected (browser refresh)`);
+            return;
+          }
+          
+          // Otherwise, it was a tab close - clean up everything
+          console.log(`🧹 Tab closed, cleaning up session: ${sessionId}`);
+          await cleanupSession(sessionId);
+        }, 10000); // 10 second window for refresh
+        
+      } else {
+        // No client exists, just remove from tracking
+        initializingSessions.delete(sessionId);
+        activeSessions.delete(sessionId);
+      }
     }
   });
 
@@ -619,9 +698,9 @@ async function startServer() {
       console.log(`📁 Sessions folder: ${TOKENS_BASE_PATH}`);
       console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
       
-  if (process.env.FLY_APP_NAME) {
-  console.log(`🔗 Fly.io URL: https://${process.env.FLY_APP_NAME}.fly.dev`);
-}
+      if (process.env.FLY_APP_NAME) {
+        console.log(`🔗 Fly.io URL: https://${process.env.FLY_APP_NAME}.fly.dev`);
+      }
       
       console.log('🚀 Ready for multiple users!');
       
