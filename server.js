@@ -12,11 +12,11 @@ const crypto = require('crypto');
 
 // Configuration
 const PORT = process.env.PORT || 3000;
-// ✅ Railway configuration
-const IS_RAILWAY = process.env.RAILWAY_ENVIRONMENT !== undefined;
+// ✅ Fly.io configuration
+const IS_FLYIO = process.env.FLY_APP_NAME !== undefined;
 
-if (IS_RAILWAY) {
-  console.log('🚂 Running on Railway');
+if (IS_FLYIO) {
+  console.log('✈️  Running on Fly.io');
 }
 const TOKENS_BASE_PATH = path.join(__dirname, 'sessions');
 const TOKENS_PATH = path.join(__dirname, 'tokens');
@@ -148,10 +148,10 @@ function generateSessionId(fingerprint) {
     .substring(0, 16);
 }
 
-// Cleanup inactive sessions (Railway has better resources - 60 minutes timeout)
+// Cleanup inactive sessions (Fly.io - 60 minutes timeout)
 setInterval(() => {
   const now = Date.now();
-  const TIMEOUT = 60 * 60 * 1000; // 60 minutes on Railway vs 30 on Render
+  const TIMEOUT = 60 * 60 * 1000; // 60 minutes
 
   activeSessions.forEach(async (session, sessionId) => {
     if (now - session.lastActivity > TIMEOUT) {
@@ -619,8 +619,8 @@ async function startServer() {
       console.log(`📁 Sessions folder: ${TOKENS_BASE_PATH}`);
       console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
       
-      if (process.env.RAILWAY_PUBLIC_DOMAIN) {
-  console.log(`🔗 Railway URL: https://${process.env.RAILWAY_PUBLIC_DOMAIN}`);
+  if (process.env.FLY_APP_NAME) {
+  console.log(`🔗 Fly.io URL: https://${process.env.FLY_APP_NAME}.fly.dev`);
 }
       
       console.log('🚀 Ready for multiple users!');
