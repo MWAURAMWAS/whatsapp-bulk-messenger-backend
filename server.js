@@ -269,7 +269,7 @@ async function initializeWhatsAppSession(sessionId, ws) {
         console.log(`⚠️ Error closing existing client: ${error.message}`);
       }
     }
-    / ✅ FIX: Force cleanup browser profile if it exists (prevents "browser already running" error)
+    // ✅ FIX: Force cleanup browser profile if it exists (prevents "browser already running" error)
 const browserProfilePath = path.join(sessionPath, 'browser-profile');
 if (fs.existsSync(browserProfilePath)) {
   try {
