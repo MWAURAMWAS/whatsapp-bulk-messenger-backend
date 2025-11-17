@@ -166,11 +166,25 @@ setInterval(() => {
   const now = Date.now();
   const INIT_TIMEOUT = 3 * 60 * 1000; // 3 minutes max for initialization
   
+  // Clean up stuck initializations
   initializingSessions.forEach((timestamp, sessionId) => {
     if (now - timestamp > INIT_TIMEOUT) {
       console.log(`⏰ Cleaning up stuck initialization: ${sessionId}`);
       initializingSessions.delete(sessionId);
       cleanupSession(sessionId);
+    }
+  });
+  
+  // ✅ FIX: Also clean up sessions with dead WebSockets but alive clients (ZOMBIES)
+  activeSessions.forEach((session, sessionId) => {
+    if (session.client && (!session.ws || session.ws.readyState !== WebSocket.OPEN)) {
+      const timeSinceActivity = now - session.lastActivity;
+      
+      // If WebSocket is dead for more than 30 seconds, kill the session
+      if (timeSinceActivity > 30000) {
+        console.log(`🧟 Killing zombie session with dead WebSocket: ${sessionId}`);
+        cleanupSession(sessionId);
+      }
     }
   });
 }, 60 * 1000); // Check every minute
@@ -258,6 +272,13 @@ async function initializeWhatsAppSession(sessionId, ws) {
       message: 'Initializing WhatsApp client...',
       sessionId: sessionId
     });
+    // ✅ FIX: Check if WebSocket is still alive before starting expensive browser init
+if (!ws || ws.readyState !== WebSocket.OPEN) {
+  console.log(`❌ WebSocket already closed for session: ${sessionId}, aborting initialization`);
+  initializingSessions.delete(sessionId);
+  activeSessions.delete(sessionId);
+  return null;
+}
 
     const existingSession = activeSessions.get(sessionId);
     if (existingSession && existingSession.client) {
@@ -690,10 +711,21 @@ wss.on('connection', async (ws) => {
         }, 10000); // 10 second window for refresh
         
       } else {
-        // No client exists, just remove from tracking
-        initializingSessions.delete(sessionId);
-        activeSessions.delete(sessionId);
-      }
+  // ✅ FIX: If still initializing and WebSocket closes early, kill it immediately
+  if (initializingSessions.has(sessionId)) {
+    console.log(`⚠️ WebSocket closed during initialization, force cleanup: ${sessionId}`);
+    initializingSessions.delete(sessionId);
+    
+    // Give browser 2 seconds to start, then kill it
+    setTimeout(async () => {
+      await cleanupSession(sessionId);
+    }, 2000);
+  } else {
+    // No client, no initialization, just clean up
+    initializingSessions.delete(sessionId);
+    activeSessions.delete(sessionId);
+  }
+}
     }
   });
 
